@@ -23,6 +23,7 @@ import (
 	"github.com/isaacmirandacampos/robooks/internal/epub"
 	"github.com/isaacmirandacampos/robooks/internal/genre"
 	"github.com/isaacmirandacampos/robooks/internal/meta"
+	"github.com/isaacmirandacampos/robooks/internal/series"
 	"github.com/isaacmirandacampos/robooks/internal/target"
 )
 
@@ -32,19 +33,23 @@ const (
 )
 
 type Options struct {
-	Library      string
-	Paths        []string // subconjunto opcional; vazio = biblioteca inteira
-	Target       target.Target
-	Apply        bool
-	Enrich       bool
-	Relayout     bool
-	Workers      int
-	Limit        int
-	Timeout      time.Duration
-	TagsPT       bool
-	FailLog      string
-	CleanGenres  bool
-	MinGenreFreq int
+	Library          string
+	Paths            []string // subconjunto opcional; vazio = biblioteca inteira
+	Target           target.Target
+	Apply            bool
+	Enrich           bool
+	Relayout         bool
+	Workers          int
+	Limit            int
+	Timeout          time.Duration
+	TagsPT           bool
+	FailLog          string
+	CleanGenres      bool
+	MinGenreFreq     int
+	DetectSeries     bool
+	MinSeriesMembers int
+	ExcludeSeries    []string
+	SeriesLog        string
 }
 
 type item struct {
@@ -97,6 +102,9 @@ func Run(o Options) error {
 	if len(items) == 0 {
 		fmt.Println("nada a fazer: todos os livros já têm os campos pedidos.")
 		return nil
+	}
+	if o.DetectSeries {
+		return detectSeries(o)
 	}
 	if o.CleanGenres {
 		return cleanGenres(o)
@@ -231,6 +239,136 @@ func cleanGenres(o Options) error {
 	wg2.Wait()
 	fmt.Printf("\naplicado em %s\n  livros atualizados: %d\n  falhas: %d\n",
 		time.Since(start).Round(time.Second), ok.Load(), falhas.Load())
+	return nil
+}
+
+// detectSeries procura séries não declaradas e grava calibre:series nos volumes.
+//
+// Só considera livros que ainda não têm série: o que o arquivo declara é mais confiável
+// que qualquer heurística e não deve ser sobrescrito.
+func detectSeries(o Options) error {
+	var files []string
+	roots := o.Paths
+	if len(roots) == 0 {
+		roots = []string{o.Library}
+	}
+	for _, root := range roots {
+		filepath.WalkDir(root, func(p string, d fs.DirEntry, e error) error {
+			if e == nil && !d.IsDir() && strings.EqualFold(filepath.Ext(d.Name()), ".epub") &&
+				!strings.HasPrefix(d.Name(), ".") {
+				files = append(files, p)
+			}
+			return nil
+		})
+	}
+
+	var books []series.Book
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, max(1, runtime.NumCPU()-2))
+	for _, f := range files {
+		wg.Add(1)
+		go func(f string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			m, err := epub.ReadMeta(f)
+			if err != nil || strings.TrimSpace(m.Series) != "" {
+				return // já declara série: não mexe
+			}
+			t, a := m.Title, m.Author
+			if t == "" || a == "" {
+				return
+			}
+			mu.Lock()
+			books = append(books, series.Book{Path: f, Title: t, Author: a})
+			mu.Unlock()
+		}(f)
+	}
+	wg.Wait()
+
+	excluir := map[string]bool{}
+	for _, e := range o.ExcludeSeries {
+		if e = strings.TrimSpace(e); e != "" {
+			excluir[strings.ToLower(e)] = true
+		}
+	}
+	cands := series.DetectExcluding(books, o.MinSeriesMembers, excluir)
+	if len(excluir) > 0 {
+		fmt.Printf("  séries vetadas por -exclude-series: %d\n", len(excluir))
+	}
+	total := 0
+	for _, c := range cands {
+		total += len(c.Members)
+	}
+	fmt.Printf("=== detecção de séries ===\n")
+	fmt.Printf("  livros sem série analisados: %d\n", len(books))
+	fmt.Printf("  séries encontradas:          %d  (mínimo de %d volumes)\n", len(cands), o.MinSeriesMembers)
+	fmt.Printf("  livros que ganhariam série:  %d\n\n", total)
+
+	if !o.Apply {
+		for i, c := range cands {
+			if i >= 25 {
+				fmt.Printf("  ... e %d séries\n", len(cands)-25)
+				break
+			}
+			fmt.Printf("  %s  (%d volumes) — %s\n", c.Name, len(c.Members), c.Members[0].Author)
+			for j, m := range c.Members {
+				if j >= 4 {
+					fmt.Printf("      ... e mais %d\n", len(c.Members)-4)
+					break
+				}
+				fmt.Printf("      %s\n", truncate(m.Title, 64))
+			}
+		}
+		fmt.Printf("\nNADA FOI MODIFICADO (execução de inspeção). Use -apply para aplicar.\n")
+		fmt.Printf("Revise a lista: a detecção é heurística e pode agrupar livros que só compartilham uma palavra.\n")
+		return nil
+	}
+
+	var slog *os.File
+	if o.SeriesLog != "" {
+		if f, err := os.Create(o.SeriesLog); err == nil {
+			slog = f
+			defer f.Close()
+			fmt.Fprintf(f, "# desfazer: awk -F'\\t' 'NR>2{print $2}' %s | while IFS= read -r f; do \\\n"+
+				"#   env -i PATH=/usr/bin:/bin HOME=$HOME /usr/bin/python3 /usr/bin/ebook-meta \"$f\" --series \"\"; done\n",
+				o.SeriesLog)
+			fmt.Fprintf(f, "serie\tarquivo\n")
+		}
+	}
+	var slogMu sync.Mutex
+
+	var ok, falhas atomic.Int64
+	var wg2 sync.WaitGroup
+	sem2 := make(chan struct{}, max(1, runtime.NumCPU()-2))
+	for _, c := range cands {
+		for _, m := range c.Members {
+			wg2.Add(1)
+			go func(nome string, b series.Book) {
+				defer wg2.Done()
+				sem2 <- struct{}{}
+				defer func() { <-sem2 }()
+				// Grava só o nome da série: a ordem dos volumes não é dedutível do
+				// título, e um índice inventado ordenaria a leitura errado.
+				if err := writeMeta(b.Path, []string{"--series", nome}); err != nil {
+					falhas.Add(1)
+					return
+				}
+				ok.Add(1)
+				if slog != nil {
+					slogMu.Lock()
+					fmt.Fprintf(slog, "%s\t%s\n", nome, b.Path)
+					slogMu.Unlock()
+				}
+			}(c.Name, m)
+		}
+	}
+	wg2.Wait()
+	fmt.Printf("aplicado:\n  volumes marcados: %d\n  falhas: %d\n", ok.Load(), falhas.Load())
+	if o.SeriesLog != "" {
+		fmt.Printf("  log reversível: %s\n", o.SeriesLog)
+	}
 	return nil
 }
 

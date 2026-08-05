@@ -232,6 +232,10 @@ func cmdEdit(args []string) int {
 	failLog := fs.String("faillog", "robooks-falhas.log", "arquivo de log das falhas")
 	cleanGenres := fs.Bool("clean-genres", false, "limpar e unificar os gêneros existentes (remove ruído, traduz, corta a cauda longa)")
 	minFreq := fs.Int("min-genre-freq", 3, "com -clean-genres, frequência mínima para um gênero valer um item no filtro")
+	detectSeries := fs.Bool("detect-series", false, "descobrir séries não declaradas a partir dos títulos do mesmo autor")
+	minMembers := fs.Int("min-series-volumes", 3, "com -detect-series, volumes mínimos para aceitar uma série")
+	excludeSeries := fs.String("exclude-series", "", "nomes de série a vetar, separados por vírgula (a detecção é heurística)")
+	seriesLog := fs.String("serieslog", "robooks-series.tsv", "log reversível das séries gravadas")
 	fs.Parse(args)
 	checkStrayFlags(fs.Args())
 
@@ -245,6 +249,8 @@ func cmdEdit(args []string) int {
 		Enrich: *enrichFlag, Relayout: *relayout, Workers: *workers,
 		Limit: *limit, Timeout: *timeout, TagsPT: *ptTags, FailLog: *failLog,
 		CleanGenres: *cleanGenres, MinGenreFreq: *minFreq,
+		DetectSeries: *detectSeries, MinSeriesMembers: *minMembers,
+		ExcludeSeries: strings.Split(*excludeSeries, ","), SeriesLog: *seriesLog,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 		return 1
