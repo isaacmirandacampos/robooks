@@ -152,6 +152,8 @@ func cmdIngest(args []string) int {
 	convert := fs.Bool("convert", true, "converter .mobi/.azw3 para .epub via calibre")
 	enrichFlag := fs.Bool("enrich", false, "consultar fontes externas para completar gêneros, ISBN, editora e sinopse (7-25s por livro)")
 	ptTags := fs.Bool("tags-pt", true, "com -enrich, traduzir os gêneros para português")
+	minFreq := fs.Int("min-genre-freq", 3,
+		"gênero só entra se a biblioteca já o usa N vezes ou se for canônico (0 desliga o filtro)")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
@@ -181,6 +183,7 @@ func cmdIngest(args []string) int {
 		Convert:       *convert,
 		Enrich:        *enrichFlag,
 		TranslateTags: *ptTags,
+		MinGenreFreq:  *minFreq,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
@@ -227,6 +230,8 @@ func cmdEdit(args []string) int {
 	timeout := fs.Duration("timeout", 90*time.Second, "tempo máximo por consulta externa")
 	ptTags := fs.Bool("tags-pt", true, "traduzir os gêneros para português")
 	failLog := fs.String("faillog", "robooks-falhas.log", "arquivo de log das falhas")
+	cleanGenres := fs.Bool("clean-genres", false, "limpar e unificar os gêneros existentes (remove ruído, traduz, corta a cauda longa)")
+	minFreq := fs.Int("min-genre-freq", 3, "com -clean-genres, frequência mínima para um gênero valer um item no filtro")
 	fs.Parse(args)
 	checkStrayFlags(fs.Args())
 
@@ -239,6 +244,7 @@ func cmdEdit(args []string) int {
 		Library: *lib, Paths: fs.Args(), Target: t, Apply: *apply,
 		Enrich: *enrichFlag, Relayout: *relayout, Workers: *workers,
 		Limit: *limit, Timeout: *timeout, TagsPT: *ptTags, FailLog: *failLog,
+		CleanGenres: *cleanGenres, MinGenreFreq: *minFreq,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 		return 1

@@ -19,7 +19,10 @@ import (
 
 // formatVersion sobe quando o cálculo da assinatura muda de forma incompatível; o
 // índice antigo é descartado em vez de produzir comparações silenciosamente erradas.
-const formatVersion = 1
+// Subiu para 2 quando o índice passou a guardar Tags: um índice da versão anterior
+// não tem o campo, e usá-lo faria o ingest achar que a biblioteca não usa gênero
+// nenhum, deixando passar qualquer rótulo.
+const formatVersion = 2
 
 // Entry é o que se sabe sobre um livro já indexado.
 type Entry struct {
@@ -31,6 +34,7 @@ type Entry struct {
 	Title   string
 	Author  string
 	Series  string
+	Tags    []string // gêneros já em uso, para o ingest não inventar vocabulário novo
 }
 
 // Index é o conjunto de livros conhecidos, endereçado pelo caminho relativo.
@@ -162,4 +166,17 @@ func DefaultPath(root string) string {
 	// Fora da biblioteca de propósito: o Kavita varre a pasta e um arquivo estranho lá
 	// dentro só geraria ruído no scan.
 	return filepath.Join(home, ".cache", "robooks", "index.gz")
+}
+
+// GenreFreq conta quantos livros usam cada gênero. É o que permite ao ingest decidir se
+// um gênero que chega num arquivo novo já faz parte do vocabulário da biblioteca ou é
+// mais um rótulo solto.
+func (ix *Index) GenreFreq() map[string]int {
+	f := map[string]int{}
+	for _, e := range ix.Entries {
+		for _, t := range e.Tags {
+			f[t]++
+		}
+	}
+	return f
 }

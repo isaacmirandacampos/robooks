@@ -19,6 +19,7 @@ import (
 
 	"github.com/isaacmirandacampos/robooks/internal/enrich"
 	"github.com/isaacmirandacampos/robooks/internal/epub"
+	"github.com/isaacmirandacampos/robooks/internal/genre"
 	"github.com/isaacmirandacampos/robooks/internal/index"
 	"github.com/isaacmirandacampos/robooks/internal/meta"
 	"github.com/isaacmirandacampos/robooks/internal/target"
@@ -132,7 +133,7 @@ func BuildIndex(o IndexOptions) (IndexResult, error) {
 			m, _ := epub.ReadMeta(full)
 			e := &index.Entry{
 				Path: j.rel, Size: j.size, ModTime: j.mod, Words: words, Sig: sig,
-				Title: m.Title, Author: m.Author, Series: m.Series,
+				Title: m.Title, Author: m.Author, Series: m.Series, Tags: m.Tags,
 			}
 			mu.Lock()
 			ix.Put(e)
@@ -169,6 +170,7 @@ type Options struct {
 	Enrich        bool
 	EnrichWorkers int
 	TranslateTags bool
+	MinGenreFreq  int
 }
 
 type outcome struct {
@@ -178,6 +180,7 @@ type outcome struct {
 	metaArgs   []string
 	enrichArgs []string
 	enrichNote string
+	genreNote  string
 	converted  bool
 	err        error
 
@@ -210,6 +213,10 @@ func Run(o Options) error {
 	fmt.Printf("alvo:       %s — %s\n", o.Target.Name(), o.Target.Describe())
 	fmt.Printf("duplicata:  semelhança >= %.0f%%, ação: %s\n\n", o.Similarity*100, o.OnDuplicate)
 
+	// Vocabulário da biblioteca: sem ele, cada arquivo que entra reintroduz o ruído que
+	// a limpeza tirou, e o filtro do Kavita volta a ficar inutilizável.
+	gfreq := ix.GenreFreq()
+
 	results := make([]outcome, len(files))
 	n := workersOrDefault(o.Workers)
 	var wg sync.WaitGroup
@@ -221,7 +228,7 @@ func Run(o Options) error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = process(o, ix, f)
+			results[i] = process(o, ix, f, gfreq)
 		}(i, f)
 	}
 	wg.Wait()
@@ -231,7 +238,7 @@ func Run(o Options) error {
 
 // process avalia um arquivo: converte se necessário, mede a assinatura, procura
 // duplicata e calcula o destino. Não escreve nada na biblioteca.
-func process(o Options, ix *index.Index, src string) outcome {
+func process(o Options, ix *index.Index, src string, gfreq map[string]int) outcome {
 	res := outcome{src: src}
 
 	work := src
@@ -288,7 +295,65 @@ func process(o Options, ix *index.Index, src string) outcome {
 	if o.Enrich {
 		res.enrichArgs, res.enrichNote = enrichOne(o, m, b)
 	}
+	res.applyGenrePolicy(o, m, gfreq)
 	return res
+}
+
+// applyGenrePolicy submete os gêneros do livro — os que já vinham no arquivo e os que o
+// enrich trouxe — à mesma regra que mantém o filtro da biblioteca limpo.
+func (r *outcome) applyGenrePolicy(o Options, m epub.Meta, gfreq map[string]int) {
+	if o.MinGenreFreq <= 0 {
+		return
+	}
+	// Junta o que o arquivo já tinha com o que a consulta externa sugeriu.
+	todos := append([]string{}, m.Tags...)
+	for i := 0; i+1 < len(r.enrichArgs); i += 2 {
+		if r.enrichArgs[i] == "--tags" {
+			todos = append(todos, strings.Split(r.enrichArgs[i+1], ",")...)
+		}
+	}
+	if len(todos) == 0 {
+		return
+	}
+	aceitos, recusados := genre.Admit(todos, gfreq, o.MinGenreFreq)
+
+	// Remove qualquer --tags que o enrich tenha proposto: a decisão final é esta.
+	var limpos []string
+	for i := 0; i < len(r.enrichArgs); i += 2 {
+		if r.enrichArgs[i] != "--tags" {
+			limpos = append(limpos, r.enrichArgs[i], r.enrichArgs[i+1])
+		}
+	}
+	r.enrichArgs = limpos
+
+	if !sameStrings(aceitos, m.Tags) {
+		r.metaArgs = append(r.metaArgs, "--tags", strings.Join(aceitos, ","))
+	}
+	switch {
+	case len(recusados) > 0 && len(aceitos) > 0:
+		r.genreNote = fmt.Sprintf("gêneros: %s (descartados: %s)",
+			strings.Join(aceitos, ", "), strings.Join(recusados, ", "))
+	case len(recusados) > 0:
+		r.genreNote = "gêneros descartados por serem raros/ruído: " + strings.Join(recusados, ", ")
+	case len(aceitos) > 0 && !sameStrings(aceitos, m.Tags):
+		r.genreNote = "gêneros normalizados: " + strings.Join(aceitos, ", ")
+	}
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x := append([]string{}, a...)
+	y := append([]string{}, b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // enrichOne consulta fontes externas para completar o que falta no arquivo. Só é
@@ -369,6 +434,9 @@ func report(o Options, ix *index.Index, results []outcome) error {
 			if r.enrichNote != "" {
 				fmt.Printf("             externo: %s\n", r.enrichNote)
 			}
+			if r.genreNote != "" {
+				fmt.Printf("             %s\n", r.genreNote)
+			}
 		}
 	}
 
@@ -418,7 +486,8 @@ func apply(o Options, ix *index.Index, results []outcome) error {
 						m, _ := epub.ReadMeta(dst)
 						ix.Put(&index.Entry{
 							Path: r.duplicate.Entry.Path, Size: st.Size(), ModTime: st.ModTime().Unix(),
-							Words: words, Sig: sig, Title: m.Title, Author: m.Author, Series: m.Series,
+							Words: words, Sig: sig, Title: m.Title, Author: m.Author,
+							Series: m.Series, Tags: m.Tags,
 						})
 					}
 				}
@@ -483,7 +552,8 @@ func apply(o Options, ix *index.Index, results []outcome) error {
 				m, _ := epub.ReadMeta(dst)
 				ix.Put(&index.Entry{
 					Path: r.dest, Size: st.Size(), ModTime: st.ModTime().Unix(),
-					Words: words, Sig: sig, Title: m.Title, Author: m.Author, Series: m.Series,
+					Words: words, Sig: sig, Title: m.Title, Author: m.Author,
+					Series: m.Series, Tags: m.Tags,
 				})
 			}
 		}

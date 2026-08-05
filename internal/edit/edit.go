@@ -21,6 +21,7 @@ import (
 
 	"github.com/isaacmirandacampos/robooks/internal/enrich"
 	"github.com/isaacmirandacampos/robooks/internal/epub"
+	"github.com/isaacmirandacampos/robooks/internal/genre"
 	"github.com/isaacmirandacampos/robooks/internal/meta"
 	"github.com/isaacmirandacampos/robooks/internal/target"
 )
@@ -31,17 +32,19 @@ const (
 )
 
 type Options struct {
-	Library  string
-	Paths    []string // subconjunto opcional; vazio = biblioteca inteira
-	Target   target.Target
-	Apply    bool
-	Enrich   bool
-	Relayout bool
-	Workers  int
-	Limit    int
-	Timeout  time.Duration
-	TagsPT   bool
-	FailLog  string
+	Library      string
+	Paths        []string // subconjunto opcional; vazio = biblioteca inteira
+	Target       target.Target
+	Apply        bool
+	Enrich       bool
+	Relayout     bool
+	Workers      int
+	Limit        int
+	Timeout      time.Duration
+	TagsPT       bool
+	FailLog      string
+	CleanGenres  bool
+	MinGenreFreq int
 }
 
 type item struct {
@@ -95,11 +98,163 @@ func Run(o Options) error {
 		fmt.Println("nada a fazer: todos os livros já têm os campos pedidos.")
 		return nil
 	}
+	if o.CleanGenres {
+		return cleanGenres(o)
+	}
 	if !o.Apply {
 		preview(o, items)
 		return nil
 	}
 	return apply(o, items)
+}
+
+// cleanGenres reescreve os gêneros da biblioteca inteira.
+//
+// São duas passadas por necessidade, não por desleixo: decidir se um gênero fica
+// depende de quantos livros o usam, e isso só se sabe depois de ler todos. A primeira
+// passada monta o vocabulário; a segunda escreve.
+func cleanGenres(o Options) error {
+	var files []string
+	roots := o.Paths
+	if len(roots) == 0 {
+		roots = []string{o.Library}
+	}
+	for _, root := range roots {
+		filepath.WalkDir(root, func(p string, d fs.DirEntry, e error) error {
+			if e == nil && !d.IsDir() && strings.EqualFold(filepath.Ext(d.Name()), ".epub") &&
+				!strings.HasPrefix(d.Name(), ".") {
+				files = append(files, p)
+			}
+			return nil
+		})
+	}
+
+	type bookTags struct {
+		path  string
+		antes []string
+		limpo []string
+	}
+	all := make([]bookTags, 0, len(files))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, max(1, runtime.NumCPU()-2))
+	for _, f := range files {
+		wg.Add(1)
+		go func(f string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			m, err := epub.ReadMeta(f)
+			if err != nil || len(m.Tags) == 0 {
+				return
+			}
+			c := genre.Clean(m.Tags)
+			mu.Lock()
+			all = append(all, bookTags{f, m.Tags, c})
+			mu.Unlock()
+		}(f)
+	}
+	wg.Wait()
+
+	perBook := make([][]string, 0, len(all))
+	for _, b := range all {
+		perBook = append(perBook, b.limpo)
+	}
+	vocab := genre.BuildVocabulary(perBook, o.MinGenreFreq)
+
+	antesDistintos := map[string]bool{}
+	for _, b := range all {
+		for _, t := range b.antes {
+			antesDistintos[t] = true
+		}
+	}
+
+	var mudam, esvaziam int
+	for i := range all {
+		final := vocab.Apply(all[i].antes)
+		if !sameSet(final, all[i].antes) {
+			mudam++
+		}
+		if len(final) == 0 && len(all[i].antes) > 0 {
+			esvaziam++
+		}
+		all[i].limpo = final
+	}
+
+	fmt.Printf("=== limpeza de gêneros ===\n")
+	fmt.Printf("  livros com gênero:        %d\n", len(all))
+	fmt.Printf("  vocabulário antes:        %d rótulos distintos\n", len(antesDistintos))
+	fmt.Printf("  vocabulário depois:       %d (frequência mínima: %d)\n", vocab.Size(), o.MinGenreFreq)
+	fmt.Printf("  livros que mudam:         %d\n", mudam)
+	fmt.Printf("  livros que ficam sem nenhum gênero: %d\n", esvaziam)
+	fmt.Printf("\n  gêneros mantidos: %s\n", strings.Join(vocab.Top(40), " · "))
+
+	if !o.Apply {
+		fmt.Printf("\n  exemplos:\n")
+		n := 0
+		for _, b := range all {
+			if sameSet(b.limpo, b.antes) || n >= 8 {
+				continue
+			}
+			n++
+			rel, _ := filepath.Rel(o.Library, b.path)
+			fmt.Printf("    %s\n      antes:  %s\n      depois: %s\n",
+				truncate(rel, 66), truncate(strings.Join(b.antes, ", "), 66),
+				truncate(strings.Join(b.limpo, ", "), 66))
+		}
+		fmt.Printf("\nNADA FOI MODIFICADO (execução de inspeção). Use -apply para aplicar.\n")
+		return nil
+	}
+
+	var ok, falhas atomic.Int64
+	var wg2 sync.WaitGroup
+	sem2 := make(chan struct{}, max(1, runtime.NumCPU()-2))
+	start := time.Now()
+	for _, b := range all {
+		if sameSet(b.limpo, b.antes) {
+			continue
+		}
+		wg2.Add(1)
+		go func(b bookTags) {
+			defer wg2.Done()
+			sem2 <- struct{}{}
+			defer func() { <-sem2 }()
+			// Lista vazia apaga os gêneros: o ebook-meta aceita --tags "" para isso, e
+			// nenhum gênero é melhor que gênero-ruído no filtro.
+			if err := writeMeta(b.path, []string{"--tags", strings.Join(b.limpo, ",")}); err != nil {
+				falhas.Add(1)
+				return
+			}
+			ok.Add(1)
+		}(b)
+	}
+	wg2.Wait()
+	fmt.Printf("\naplicado em %s\n  livros atualizados: %d\n  falhas: %d\n",
+		time.Since(start).Round(time.Second), ok.Load(), falhas.Load())
+	return nil
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x := append([]string{}, a...)
+	y := append([]string{}, b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func truncate(s string, n int) string {
+	if len([]rune(s)) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
 }
 
 // collect lista os livros que ainda precisam de trabalho. Filtrar aqui é o que torna o
