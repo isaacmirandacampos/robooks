@@ -1,0 +1,7 @@
+# binário compilado localmente
+/kinava
+# índice de conteúdo: gerado, grande e específico da máquina
+*.gz
+# artefatos de teste
+/_test/
+/_smoke/
