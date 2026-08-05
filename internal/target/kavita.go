@@ -1,8 +1,8 @@
 package target
 
 import (
-	"github.com/isaacdmcampos/kinava/internal/epub"
-	"github.com/isaacdmcampos/kinava/internal/meta"
+	"github.com/isaacdmcampos/robooks/internal/epub"
+	"github.com/isaacdmcampos/robooks/internal/meta"
 )
 
 // Kavita aplica as convenções do Kavita para bibliotecas de livros.

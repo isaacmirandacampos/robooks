@@ -1,3 +1,3 @@
-module github.com/isaacdmcampos/kinava
+module github.com/isaacdmcampos/robooks
 
 go 1.26

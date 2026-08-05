@@ -3,7 +3,7 @@ package epub
 import (
 	"archive/zip"
 	"errors"
-	"github.com/isaacdmcampos/kinava/internal/meta"
+	"github.com/isaacdmcampos/robooks/internal/meta"
 	"html"
 	"regexp"
 	"strconv"
@@ -23,6 +23,12 @@ type Meta struct {
 	Series      string
 	SeriesIndex float64
 	HasSeries   bool
+
+	// Preenchidos para saber o que a consulta externa precisa completar.
+	Tags      []string
+	ISBN      string
+	Publisher string
+	HasDesc   bool
 }
 
 var (
@@ -33,6 +39,11 @@ var (
 	reSeries = regexp.MustCompile(`<meta\s+name\s*=\s*"calibre:series"\s+content\s*=\s*"([^"]*)"`)
 	reSerIdx = regexp.MustCompile(`<meta\s+name\s*=\s*"calibre:series_index"\s+content\s*=\s*"([^"]*)"`)
 	reOpfIn  = regexp.MustCompile(`(?i)\.opf$`)
+
+	reSubject   = regexp.MustCompile(`<dc:subject[^>]*>([^<]+)</dc:subject>`)
+	reISBNMeta  = regexp.MustCompile(`(?i)<dc:identifier[^>]*isbn[^>]*>\s*(?:urn:isbn:)?([0-9Xx]{10,17})`)
+	rePublisher = regexp.MustCompile(`<dc:publisher[^>]*>([^<]+)</dc:publisher>`)
+	reDesc      = regexp.MustCompile(`<dc:description[^>]*>\s*[^<\s]`)
 )
 
 // readMeta abre o epub e extrai os campos do OPF. Só lê o OPF, não o livro todo,
@@ -94,5 +105,17 @@ func ReadMeta(path string) (Meta, error) {
 	if x := reSerIdx.FindStringSubmatch(s); x != nil {
 		m.SeriesIndex, _ = strconv.ParseFloat(x[1], 64)
 	}
+	for _, x := range reSubject.FindAllStringSubmatch(s, -1) {
+		if v := meta.Collapse(html.UnescapeString(x[1])); v != "" {
+			m.Tags = append(m.Tags, v)
+		}
+	}
+	if x := reISBNMeta.FindStringSubmatch(s); x != nil {
+		m.ISBN = strings.TrimSpace(x[1])
+	}
+	if x := rePublisher.FindStringSubmatch(s); x != nil {
+		m.Publisher = meta.Collapse(html.UnescapeString(x[1]))
+	}
+	m.HasDesc = reDesc.MatchString(s)
 	return m, nil
 }

@@ -1,17 +1,21 @@
-# kinava
+# robooks
+
+CLI agnóstico de ingestão de ebooks: detecta duplicata pelo conteúdo, normaliza
+metadados e escreve no layout que o servidor de destino espera. Hoje suporta **Kavita** e
+**Calibre**; adicionar outro alvo é implementar um método.
 
 CLI para preparar ebooks baixados antes de entrarem numa biblioteca já organizada:
 detecta duplicata pelo conteúdo, normaliza metadados e escreve no layout que o servidor
 de destino espera.
 
 ```bash
-go build -o kinava ./cmd/kinava
+go build -o robooks ./cmd/robooks
 
-./kinava index                        # indexa a biblioteca (uma vez, depois é incremental)
-./kinava ingest ~/Downloads/livros    # mostra o que faria
-./kinava ingest -apply ~/Downloads/livros
-./kinava check livro.epub             # "isto já existe?" — exit 1 se sim
-./kinava targets                      # alvos suportados
+./robooks index                        # indexa a biblioteca (uma vez, depois é incremental)
+./robooks ingest ~/Downloads/livros    # mostra o que faria
+./robooks ingest -apply ~/Downloads/livros
+./robooks check livro.epub             # "isto já existe?" — exit 1 se sim
+./robooks targets                      # alvos suportados
 ```
 
 Nada é escrito sem `-apply`.
@@ -47,8 +51,8 @@ O limiar padrão é 85%, com margem larga dos dois lados. Ajuste com `-similarit
 ## O índice
 
 Calcular a assinatura de 11 mil livros leva ~1min14 com dez workers. Fazer isso a cada
-ingestão de dois arquivos seria absurdo, então `kinava index` guarda as assinaturas em
-`~/.cache/kinava/index.gz` e recalcula apenas o que mudou (por tamanho e mtime).
+ingestão de dois arquivos seria absurdo, então `robooks index` guarda as assinaturas em
+`~/.cache/robooks/index.gz` e recalcula apenas o que mudou (por tamanho e mtime).
 
 Fica fora da biblioteca de propósito: o Kavita varre a pasta e um arquivo estranho lá
 dentro só geraria ruído no scan.
@@ -100,14 +104,71 @@ colocam à frente um Python sem os módulos do calibre — o script morre com
 | `-target` | `kavita` | alvo de layout |
 | `-apply` | | sem isso, apenas relata |
 | `-similarity` | `0.85` | limiar de duplicata |
-| `-on-duplicate` | `skip` | `skip`, `quarantine` |
+| `-on-duplicate` | `best` | `best`, `skip`, `quarantine`, `replace` |
 | `-convert` | `true` | converter mobi/azw3 |
+| `-enrich` | `false` | consultar fontes externas (gêneros, ISBN, editora, sinopse) |
+| `-tags-pt` | `true` | traduzir os gêneros para português |
 | `-workers` | `NumCPU-2` | paralelismo |
+
+## Duplicata: qual cópia fica
+
+O padrão é `best` — quando o arquivo baixado é o mesmo livro que já está na biblioteca,
+fica o melhor dos dois e o outro vai para a quarentena. A ordem de decisão é:
+
+1. **Série no metadado.** É o que faz o Kavita agrupar o volume. Uma cópia com
+   `calibre:series` vale mais que uma maior sem série — "Mago Negro 02 - A Aprendiz"
+   contra "A Aprendiz" solto.
+2. **Mais texto.** Edições divergem em conteúdo real: "Nove Semanas e Meia de Amor" tem
+   44508 palavras contra 34531 da outra cópia do mesmo livro.
+3. **Mais bytes.** Só como desempate — mesmo texto e mesma série, o arquivo maior
+   costuma ter imagens melhores.
+
+O motivo de bytes ficar por último é que o tamanho sobe com imagens e enganaria a
+escolha, descartando a versão textualmente mais completa.
+
+O dry-run sempre diz **por quê**:
+
+```
+SUBSTITUI  A Fada - Carolina Munhoz.epub
+           100% igual a A Fada/A Fada - Carolina Munhoz.epub
+           o novo tem série no metadado
+```
+
+Nada é apagado: a cópia perdedora vai para `_duplicatas`.
+
+## Metadados externos (`-enrich`)
+
+Completa o que o arquivo não traz — gêneros, ISBN, editora, sinopse — via
+`fetch-ebook-metadata` do calibre, que agrega várias fontes.
+
+Só preenche lacuna, nunca sobrescreve: o metadado do arquivo veio da editora ou da
+conversão e costuma estar certo, enquanto a consulta externa é um palpite baseado em
+título e autor.
+
+Os gêneros voltam em inglês mesmo para livros em português; `-tags-pt` (ligado por
+padrão) traduz os mais comuns:
+
+```
+Fiction, Classics, Fantasy, Epic  ->  Ficção, Clássicos, Fantasia, Épico
+```
+
+Custa **7–25 s por livro**, e é por isso que está desligado por padrão e faz sentido no
+ingest (poucos arquivos) e não em lote — para 11 mil livros passaria de dez horas.
+
+Duas alternativas foram testadas e descartadas: a API do Google Books devolve
+`Quota exceeded` sem chave, e o Open Library não acha títulos em português ("O
+Silmarillion" retorna zero, "The Silmarillion" retorna 37).
+
+## Instalação
+
+```bash
+GOBIN=$HOME/.local/bin go install ./cmd/robooks
+```
+
+Evite o `go install` sem `GOBIN`: com o Go gerenciado por mise/asdf, o binário vai parar
+dentro da pasta da versão do Go e some na próxima atualização.
 
 ## Estado
 
-Funciona ponta a ponta: indexação incremental, detecção de duplicata, metadados, layout
-para Kavita e Calibre, dry-run em tudo.
-
-Falta: `-on-duplicate replace` (hoje só avisa), e a fase de metadados externos (gêneros e
-ISBN via `fetch-ebook-metadata`), que fica de fora por custar 7–25 s por consulta.
+Funciona ponta a ponta: indexação incremental, dedup por conteúdo, escolha da melhor
+cópia, metadados locais e externos, layout para Kavita e Calibre, dry-run em tudo.

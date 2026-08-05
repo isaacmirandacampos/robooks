@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/isaacdmcampos/kinava/internal/epub"
-	"github.com/isaacdmcampos/kinava/internal/index"
+	"github.com/isaacdmcampos/robooks/internal/epub"
+	"github.com/isaacdmcampos/robooks/internal/index"
 )
 
 // Modos de tratamento de duplicata.

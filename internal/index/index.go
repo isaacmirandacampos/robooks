@@ -157,9 +157,9 @@ func (ix *Index) FindSimilar(sig []uint64, threshold float64, jaccard func(a, b 
 func DefaultPath(root string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(root, ".kinava-index.gz")
+		return filepath.Join(root, ".robooks-index.gz")
 	}
 	// Fora da biblioteca de propósito: o Kavita varre a pasta e um arquivo estranho lá
 	// dentro só geraria ruído no scan.
-	return filepath.Join(home, ".cache", "kinava", "index.gz")
+	return filepath.Join(home, ".cache", "robooks", "index.gz")
 }

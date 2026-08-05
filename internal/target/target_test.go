@@ -3,8 +3,8 @@ package target
 import (
 	"testing"
 
-	"github.com/isaacdmcampos/kinava/internal/epub"
-	"github.com/isaacdmcampos/kinava/internal/meta"
+	"github.com/isaacdmcampos/robooks/internal/epub"
+	"github.com/isaacdmcampos/robooks/internal/meta"
 )
 
 func TestKavitaPlacement(t *testing.T) {

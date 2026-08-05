@@ -3,6 +3,7 @@
 package ingest
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,11 +15,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
-	"github.com/isaacdmcampos/kinava/internal/epub"
-	"github.com/isaacdmcampos/kinava/internal/index"
-	"github.com/isaacdmcampos/kinava/internal/meta"
-	"github.com/isaacdmcampos/kinava/internal/target"
+	"github.com/isaacdmcampos/robooks/internal/enrich"
+	"github.com/isaacdmcampos/robooks/internal/epub"
+	"github.com/isaacdmcampos/robooks/internal/index"
+	"github.com/isaacdmcampos/robooks/internal/meta"
+	"github.com/isaacdmcampos/robooks/internal/target"
 )
 
 const (
@@ -153,25 +156,30 @@ func BuildIndex(o IndexOptions) (IndexResult, error) {
 // ---------- ingestão ----------
 
 type Options struct {
-	Inputs      []string
-	Library     string
-	IndexPath   string
-	Target      target.Target
-	Apply       bool
-	Workers     int
-	Similarity  float64
-	OnDuplicate string
-	Quarantine  string
-	Convert     bool
+	Inputs        []string
+	Library       string
+	IndexPath     string
+	Target        target.Target
+	Apply         bool
+	Workers       int
+	Similarity    float64
+	OnDuplicate   string
+	Quarantine    string
+	Convert       bool
+	Enrich        bool
+	EnrichWorkers int
+	TranslateTags bool
 }
 
 type outcome struct {
-	src       string
-	dest      string
-	duplicate *index.Match
-	metaArgs  []string
-	converted bool
-	err       error
+	src        string
+	dest       string
+	duplicate  *index.Match
+	metaArgs   []string
+	enrichArgs []string
+	enrichNote string
+	converted  bool
+	err        error
 
 	// Preenchidos quando há duplicata e o modo é "best": qual cópia vence e por quê.
 	newWins bool
@@ -185,7 +193,7 @@ func Run(o Options) error {
 		fmt.Fprintf(os.Stderr, "aviso: %v\n", err)
 	}
 	if len(ix.Entries) == 0 {
-		fmt.Println("aviso: índice vazio — rode `kinava index` antes, senão nenhuma duplicata será detectada")
+		fmt.Println("aviso: índice vazio — rode `robooks index` antes, senão nenhuma duplicata será detectada")
 	}
 
 	files, err := collectInputs(o.Inputs)
@@ -277,7 +285,51 @@ func process(o Options, ix *index.Index, src string) outcome {
 	pl := o.Target.Place(b, m)
 	res.dest = filepath.Join(pl.Dir, pl.Filename)
 	res.metaArgs = pl.MetaArgs
+	if o.Enrich {
+		res.enrichArgs, res.enrichNote = enrichOne(o, m, b)
+	}
 	return res
+}
+
+// enrichOne consulta fontes externas para completar o que falta no arquivo. Só é
+// chamado quando -enrich está ligado, porque cada consulta custa entre 7 e 25 segundos.
+func enrichOne(o Options, m epub.Meta, b meta.Book) ([]string, string) {
+	title := m.Title
+	if title == "" {
+		title = b.Title
+	}
+	author := m.Author
+	if author == "" {
+		author = b.Author
+	}
+	if title == "" {
+		return nil, "sem título para consultar"
+	}
+
+	faltam := len(m.Tags) == 0 || m.ISBN == "" || m.Publisher == "" || !m.HasDesc
+	if !faltam {
+		return nil, "nada a completar"
+	}
+
+	r, err := enrich.Fetch(context.Background(), title, author, enrich.Options{
+		Timeout:       90 * time.Second,
+		TranslateTags: o.TranslateTags,
+	})
+	if err != nil {
+		return nil, "consulta externa: " + err.Error()
+	}
+	if !r.Found {
+		return nil, "não encontrado nas fontes externas"
+	}
+	args := r.MetaArgs(len(m.Tags) > 0, m.ISBN != "", m.Publisher != "", m.HasDesc)
+	if len(args) == 0 {
+		return nil, "fontes não trouxeram nada novo"
+	}
+	var campos []string
+	for i := 0; i < len(args); i += 2 {
+		campos = append(campos, strings.TrimPrefix(args[i], "--"))
+	}
+	return args, "completa: " + strings.Join(campos, ", ")
 }
 
 func report(o Options, ix *index.Index, results []outcome) error {
@@ -313,6 +365,9 @@ func report(o Options, ix *index.Index, results []outcome) error {
 			fmt.Printf("  NOVO       %s\n             -> %s\n", name, r.dest)
 			if len(r.metaArgs) > 0 {
 				fmt.Printf("             metadados: %s\n", strings.Join(r.metaArgs, " "))
+			}
+			if r.enrichNote != "" {
+				fmt.Printf("             externo: %s\n", r.enrichNote)
 			}
 		}
 	}
@@ -408,8 +463,9 @@ func apply(o Options, ix *index.Index, results []outcome) error {
 		}
 		// Escreve os metadados antes de mover: se algo falhar, a biblioteca não recebe
 		// arquivo pela metade.
-		if len(r.metaArgs) > 0 {
-			if err := writeMeta(r.src, r.metaArgs); err != nil {
+		allArgs := append(append([]string{}, r.metaArgs...), r.enrichArgs...)
+		if len(allArgs) > 0 {
+			if err := writeMeta(r.src, allArgs); err != nil {
 				fmt.Printf("aviso: metadados não aplicados em %s: %v\n", filepath.Base(r.src), err)
 			}
 		}

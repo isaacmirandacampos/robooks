@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/isaacdmcampos/kinava/internal/meta"
+	"github.com/isaacdmcampos/robooks/internal/meta"
 )
 
 // Identificação de duplicata pelo conteúdo do livro.
