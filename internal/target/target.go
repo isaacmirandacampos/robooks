@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/isaacdmcampos/robooks/internal/epub"
-	"github.com/isaacdmcampos/robooks/internal/meta"
+	"github.com/isaacmirandacampos/robooks/internal/epub"
+	"github.com/isaacmirandacampos/robooks/internal/meta"
 )
 
 // Placement é onde um livro deve ficar e com que metadados.

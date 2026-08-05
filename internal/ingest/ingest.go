@@ -17,11 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/isaacdmcampos/robooks/internal/enrich"
-	"github.com/isaacdmcampos/robooks/internal/epub"
-	"github.com/isaacdmcampos/robooks/internal/index"
-	"github.com/isaacdmcampos/robooks/internal/meta"
-	"github.com/isaacdmcampos/robooks/internal/target"
+	"github.com/isaacmirandacampos/robooks/internal/enrich"
+	"github.com/isaacmirandacampos/robooks/internal/epub"
+	"github.com/isaacmirandacampos/robooks/internal/index"
+	"github.com/isaacmirandacampos/robooks/internal/meta"
+	"github.com/isaacmirandacampos/robooks/internal/target"
 )
 
 const (

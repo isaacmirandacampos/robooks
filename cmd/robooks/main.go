@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/isaacdmcampos/robooks/internal/edit"
-	"github.com/isaacdmcampos/robooks/internal/index"
-	"github.com/isaacdmcampos/robooks/internal/ingest"
-	"github.com/isaacdmcampos/robooks/internal/target"
+	"github.com/isaacmirandacampos/robooks/internal/edit"
+	"github.com/isaacmirandacampos/robooks/internal/index"
+	"github.com/isaacmirandacampos/robooks/internal/ingest"
+	"github.com/isaacmirandacampos/robooks/internal/target"
 )
 
 const usage = `robooks — prepara ebooks para uma biblioteca organizada

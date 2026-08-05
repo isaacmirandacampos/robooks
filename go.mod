@@ -1,3 +1,3 @@
-module github.com/isaacdmcampos/robooks
+module github.com/isaacmirandacampos/robooks
 
 go 1.26

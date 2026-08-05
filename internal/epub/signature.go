@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/isaacdmcampos/robooks/internal/meta"
+	"github.com/isaacmirandacampos/robooks/internal/meta"
 )
 
 // Identificação de duplicata pelo conteúdo do livro.

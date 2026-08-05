@@ -3,7 +3,7 @@ package epub
 import (
 	"archive/zip"
 	"errors"
-	"github.com/isaacdmcampos/robooks/internal/meta"
+	"github.com/isaacmirandacampos/robooks/internal/meta"
 	"html"
 	"regexp"
 	"strconv"
