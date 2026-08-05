@@ -43,7 +43,7 @@ type Result struct {
 
 // Options controla a consulta.
 type Options struct {
-	Timeout      time.Duration
+	Timeout       time.Duration
 	TranslateTags bool // traduzir gêneros do inglês para português
 }
 
@@ -80,18 +80,70 @@ func Fetch(ctx context.Context, title, author string, o Options) (Result, error)
 	home, _ := os.UserHomeDir()
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LANG=C.UTF-8"}
 
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
 		if cctx.Err() != nil {
 			return r, fmt.Errorf("timeout após %s", o.Timeout)
 		}
-		return r, fmt.Errorf("consulta falhou")
+		// "No results found" sai com código de erro, mas não é falha: é a resposta
+		// legítima de que as fontes não conhecem o livro. Tratar como erro inflava a
+		// contagem de falhas e escondia os problemas reais.
+		if strings.Contains(stderr.String(), "No results found") ||
+			strings.Contains(string(out), "No results found") {
+			return Result{Found: false}, nil
+		}
+		return r, fmt.Errorf("consulta falhou: %s", lastLine(stderr.String()))
 	}
 	r = parseOutput(string(out))
 	if o.TranslateTags {
 		r.Tags = TranslateTags(r.Tags)
 	}
 	return r, nil
+}
+
+// FetchWithFallback tenta o título como está e, se nada vier, repete com uma forma
+// simplificada.
+//
+// Faz diferença porque muitos títulos desta biblioteca vieram truncados dos nomes de
+// arquivo ("1 A Morrer - Clube das Mulheres Contra o C") ou carregam coleção junto
+// ("O iluminado - Colecao Biblioteca Stephen King"). As fontes não encontram nada com
+// esses, mas encontram com "1 A Morrer".
+func FetchWithFallback(ctx context.Context, title, author string, o Options) (Result, error) {
+	r, err := Fetch(ctx, title, author, o)
+	if err == nil && r.Found {
+		return r, nil
+	}
+	if alt := simplifyTitle(title); alt != "" && alt != title {
+		if r2, err2 := Fetch(ctx, alt, author, o); err2 == nil && r2.Found {
+			return r2, nil
+		}
+	}
+	return r, err
+}
+
+// simplifyTitle corta o título no primeiro separador de subtítulo, que é onde costumam
+// entrar coleção, série e descrição.
+func simplifyTitle(t string) string {
+	for _, sep := range []string{" - ", ": ", " – ", "_ "} {
+		if i := strings.Index(t, sep); i > 4 {
+			return strings.TrimSpace(t[:i])
+		}
+	}
+	return ""
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) == 0 {
+		return "erro desconhecido"
+	}
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last == "" {
+		return "erro desconhecido"
+	}
+	return last
 }
 
 // parseOutput lê o formato "Campo : valor" que o fetch-ebook-metadata imprime.

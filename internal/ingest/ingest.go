@@ -311,7 +311,7 @@ func enrichOne(o Options, m epub.Meta, b meta.Book) ([]string, string) {
 		return nil, "nada a completar"
 	}
 
-	r, err := enrich.Fetch(context.Background(), title, author, enrich.Options{
+	r, err := enrich.FetchWithFallback(context.Background(), title, author, enrich.Options{
 		Timeout:       90 * time.Second,
 		TranslateTags: o.TranslateTags,
 	})

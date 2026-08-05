@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/isaacdmcampos/robooks/internal/edit"
 	"github.com/isaacdmcampos/robooks/internal/index"
 	"github.com/isaacdmcampos/robooks/internal/ingest"
 	"github.com/isaacdmcampos/robooks/internal/target"
@@ -33,6 +34,7 @@ COMANDOS
   index     varre a biblioteca e atualiza o índice de conteúdo
   ingest    processa arquivos novos: dedup, metadados e layout do alvo
   check     verifica se um arquivo já existe na biblioteca
+  edit      completa metadados e reaplica o layout nos livros JÁ na biblioteca
   targets   lista os alvos suportados
 
 EXEMPLOS
@@ -40,6 +42,8 @@ EXEMPLOS
   robooks ingest ~/Downloads/*.epub              inspeção, alvo kavita (padrão)
   robooks ingest -target calibre ~/Downloads     inspeção, alvo calibre
   robooks ingest -enrich -apply ~/Downloads      aplica, buscando gêneros/ISBN
+  robooks edit -enrich                           inspeciona o que falta na biblioteca
+  robooks edit -enrich -apply                    completa gêneros/ISBN de todo o acervo
 
 As flags vêm SEMPRE antes dos caminhos. Sem -apply, tudo é apenas inspeção.
 `
@@ -59,6 +63,8 @@ func main() {
 		os.Exit(cmdIngest(args))
 	case "check":
 		os.Exit(cmdCheck(args))
+	case "edit":
+		os.Exit(cmdEdit(args))
 	case "targets":
 		os.Exit(cmdTargets())
 	case "-h", "--help", "help":
@@ -127,7 +133,7 @@ func cmdIndex(args []string) int {
 	fmt.Printf("  livros indexados: %d\n", res.Total)
 	fmt.Printf("  novos/atualizados: %d\n", res.Updated)
 	fmt.Printf("  removidos do índice: %d\n", res.Pruned)
-	fmt.Printf("  índice: %s (%s)\n", p, humanSize(fileSize(p)))
+	fmt.Printf("  índice: %s (%s)\n", p, humanSize(fileSizeOf(p)))
 	fmt.Printf("  tempo: %s\n", time.Since(start).Round(time.Millisecond))
 	return 0
 }
@@ -209,7 +215,38 @@ func cmdCheck(args []string) int {
 	return 0
 }
 
-func fileSize(p string) int64 {
+func cmdEdit(args []string) int {
+	fs := flag.NewFlagSet("edit", flag.ExitOnError)
+	lib := fs.String("lib", defaultLibrary(), "raiz da biblioteca")
+	tgt := fs.String("target", "kavita", "alvo cujas convenções aplicar: "+strings.Join(target.Names(), ", "))
+	apply := fs.Bool("apply", false, "aplicar as mudanças (sem isso, apenas relata)")
+	enrichFlag := fs.Bool("enrich", false, "consultar fontes externas para completar gêneros, ISBN, editora e sinopse")
+	relayout := fs.Bool("relayout", false, "mover os arquivos para o layout do alvo")
+	workers := fs.Int("workers", 0, "paralelismo (padrão: 4 com -enrich, NumCPU-2 sem)")
+	limit := fs.Int("limit", 0, "processar no máximo N livros (útil para testar antes de rodar tudo)")
+	timeout := fs.Duration("timeout", 90*time.Second, "tempo máximo por consulta externa")
+	ptTags := fs.Bool("tags-pt", true, "traduzir os gêneros para português")
+	failLog := fs.String("faillog", "robooks-falhas.log", "arquivo de log das falhas")
+	fs.Parse(args)
+	checkStrayFlags(fs.Args())
+
+	t, err := target.Get(*tgt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+		return 2
+	}
+	if err := edit.Run(edit.Options{
+		Library: *lib, Paths: fs.Args(), Target: t, Apply: *apply,
+		Enrich: *enrichFlag, Relayout: *relayout, Workers: *workers,
+		Limit: *limit, Timeout: *timeout, TagsPT: *ptTags, FailLog: *failLog,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func fileSizeOf(p string) int64 {
 	st, err := os.Stat(p)
 	if err != nil {
 		return 0
