@@ -29,6 +29,13 @@ type Book struct {
 var (
 	// "(Oficial)", "(Dig)" e afins: marcas de origem do arquivo, sem valor descritivo.
 	reJunk = regexp.MustCompile(`(?i)\s*\((?:oficial|dig|digital|rev|revisado)\)\s*`)
+	// Assinatura de site de download entre parênteses ou colchetes, como
+	// "(z-library.sk, 1lib.sk, z-lib.sk)". Exige um domínio de verdade dentro para não
+	// comer parênteses legítimos: "(Portuguese Edition)", "(Vol. 2)" e "(Ed. 34)"
+	// continuam intactos porque nenhum tem letra+ponto+TLD.
+	reSiteTag = regexp.MustCompile(`(?i)\s*[\(\[][^)\]]*\b[a-z0-9-]+\.(?:com|net|org|sk|to|se|ru|io|me|info|xyz|cc|is|st)\b[^)\]]*[\)\]]`)
+	// Sites conhecidos que às vezes aparecem sem domínio.
+	reKnownSite = regexp.MustCompile(`(?i)\s*[\(\[]\s*(?:z-?library|zlib|libgen|library genesis|anna'?s archive|epub ?reader|le livros|lelivros|book ?zz|b-ok)\s*[\)\]]`)
 	// Sufixo "(1)", "(2)": cópias criadas pelo download, não parte do título.
 	reDupSuffix = regexp.MustCompile(`\s*\((\d+)\)\s*$`)
 
@@ -81,6 +88,8 @@ func parse(stem string, extractAuthor bool) Book {
 		b.Dup = true
 		stem = reDupSuffix.ReplaceAllString(stem, "")
 	}
+	stem = reSiteTag.ReplaceAllString(stem, " ")
+	stem = reKnownSite.ReplaceAllString(stem, " ")
 	stem = reJunk.ReplaceAllString(stem, " ")
 	stem = strings.TrimSpace(Collapse(stem))
 

@@ -35,7 +35,13 @@ COMANDOS
   check     verifica se um arquivo já existe na biblioteca
   targets   lista os alvos suportados
 
-Sem -apply, todo comando apenas relata o que faria.
+EXEMPLOS
+  robooks index                                  indexa a biblioteca
+  robooks ingest ~/Downloads/*.epub              inspeção, alvo kavita (padrão)
+  robooks ingest -target calibre ~/Downloads     inspeção, alvo calibre
+  robooks ingest -enrich -apply ~/Downloads      aplica, buscando gêneros/ISBN
+
+As flags vêm SEMPRE antes dos caminhos. Sem -apply, tudo é apenas inspeção.
 `
 
 func main() {
@@ -61,6 +67,23 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "comando desconhecido %q\n\n%s", cmd, usage)
 		os.Exit(2)
+	}
+}
+
+// checkStrayFlags aborta quando aparece uma flag depois dos caminhos.
+//
+// O pacote flag para de interpretar no primeiro argumento posicional, então
+// "robooks ingest downloads/* -target calibre" rodaria alegremente no alvo padrão e
+// ainda trataria "-target" como se fosse um arquivo. Falhar aqui é melhor que aplicar
+// no alvo errado sem avisar.
+func checkStrayFlags(args []string) {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && len(a) > 1 {
+			fmt.Fprintf(os.Stderr,
+				"erro: a flag %q veio depois dos caminhos e seria ignorada.\n"+
+					"      as flags precisam vir antes:  robooks ingest %s <caminhos>\n", a, a)
+			os.Exit(2)
+		}
 	}
 }
 
@@ -129,6 +152,7 @@ func cmdIngest(args []string) int {
 		fmt.Fprintln(os.Stderr, "informe a pasta ou arquivo de entrada\n\nex: robooks ingest ~/Downloads/livros")
 		return 2
 	}
+	checkStrayFlags(fs.Args())
 	t, err := target.Get(*tgt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
@@ -169,6 +193,7 @@ func cmdCheck(args []string) int {
 		fmt.Fprintln(os.Stderr, "informe um arquivo .epub")
 		return 2
 	}
+	checkStrayFlags(fs.Args())
 	p := *idxPath
 	if p == "" {
 		p = index.DefaultPath(*lib)

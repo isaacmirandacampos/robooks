@@ -211,3 +211,23 @@ func TestNormKeyDescartaNaoASCII(t *testing.T) {
 		t.Errorf("NormKey(%q) = %q", "1ª Edição — Vol. 2", got)
 	}
 }
+
+// Nomes vindos de sites de download carregam a assinatura do site. Ela sai, mas
+// parênteses legítimos precisam sobreviver — daí a exigência de um domínio real dentro.
+func TestRemoveAssinaturaDeSite(t *testing.T) {
+	cases := []struct{ in, wantTitle string }{
+		{"O Iluminado (z-library.sk, 1lib.sk, z-lib.sk) - Stephen King", "O Iluminado"},
+		{"Tress, a garota do Mar Esmeralda (z-library.sk, 1lib.sk, z-lib.sk)", "Tress, a garota do Mar Esmeralda"},
+		{"Alguma Coisa [libgen]", "Alguma Coisa"},
+		{"Livro (Z-Library)", "Livro"},
+		// não deve mexer nestes
+		{"A Cidade do Sol (Portuguese Edition)", "A Cidade do Sol (Portuguese Edition)"},
+		{"A Comedia Humana (1875-1914)", "A Comedia Humana (1875-1914)"},
+		{"10 anos de governos pos-neoliberais (org.)", "10 anos de governos pos-neoliberais (org.)"},
+	}
+	for _, c := range cases {
+		if got := Parse(c.in).Title; got != c.wantTitle {
+			t.Errorf("Parse(%q).Title = %q, want %q", c.in, got, c.wantTitle)
+		}
+	}
+}
