@@ -62,3 +62,20 @@ func TestTargetsDiferem(t *testing.T) {
 		t.Errorf("kavita e calibre produziram o mesmo diretório: %q", k)
 	}
 }
+
+// Kavita e Grimmory compartilham o layout de disco porque ambos leem os metadados de
+// dentro do epub. O teste trava isso: se um dia divergirem, é uma mudança consciente.
+func TestGrimmoryMesmoLayoutQueKavita(t *testing.T) {
+	b := meta.Parse("Maze Runner 02 - Prova de Fogo - James Dashner")
+	m := epub.Meta{Title: "Prova de fogo", Author: "James Dashner", Series: "Maze Runner", SeriesIndex: 2}
+	k, g := Kavita{}.Place(b, m), Grimmory{}.Place(b, m)
+	if k.Dir != g.Dir || k.Filename != g.Filename {
+		t.Errorf("layouts divergiram: kavita=%s/%s grimmory=%s/%s", k.Dir, k.Filename, g.Dir, g.Filename)
+	}
+}
+
+func TestGrimmoryRegistrado(t *testing.T) {
+	if _, err := Get("grimmory"); err != nil {
+		t.Errorf("alvo grimmory não registrado: %v", err)
+	}
+}
