@@ -245,6 +245,7 @@ func cmdEdit(args []string) int {
 	seriesLog := fs.String("serieslog", "robooks-series.tsv", "log reversível das séries gravadas")
 	importTags := fs.String("import-tags", "", "TSV \"caminho<TAB>gêneros\" para gravar nos epubs (ex: exportado do catálogo)")
 	mergeTags := fs.Bool("merge-tags", false, "com -import-tags, somar aos gêneros do arquivo em vez de substituir")
+	verbose := fs.Bool("v", false, "com -import-tags, listar todas as divergências em vez de oito exemplos")
 	fs.Parse(args)
 	checkStrayFlags(fs.Args())
 
@@ -258,7 +259,7 @@ func cmdEdit(args []string) int {
 	if *importTags != "" {
 		if err := edit.ImportTags(edit.ImportOptions{
 			File: *importTags, Library: *lib, Apply: *apply,
-			Workers: *workers, Merge: *mergeTags,
+			Workers: *workers, Merge: *mergeTags, Verbose: *verbose,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 			return 1

@@ -19,6 +19,7 @@ var ErrNoOPF = errors.New("epub sem arquivo .opf")
 type Meta struct {
 	Title       string
 	Author      string
+	Authors     []string // todos os creators com papel de autor, na ordem do OPF
 	AuthorSort  string
 	Series      string
 	SeriesIndex float64
@@ -78,7 +79,11 @@ func ReadMeta(path string) (Meta, error) {
 	if x := reTitle.FindStringSubmatch(s); x != nil {
 		m.Title = meta.Collapse(html.UnescapeString(strings.TrimSpace(x[1])))
 	}
-	// Pega o primeiro creator com role de autor, ou o primeiro sem role.
+	// Coleta os creators que são autores — role "aut" ou sem role declarado —, deixando
+	// de fora tradutor, ilustrador e prefaciador. Author guarda o principal, para quem só
+	// precisa de um nome; Authors guarda todos, porque comparar a autoria contra um
+	// catálogo exige a lista inteira: um livro de dois autores pareceria divergente se
+	// aqui só coubesse o primeiro.
 	for _, x := range reAuthor.FindAllStringSubmatch(s, -1) {
 		attrs, val := x[1], meta.Collapse(html.UnescapeString(strings.TrimSpace(x[2])))
 		if val == "" {
@@ -88,13 +93,14 @@ func ReadMeta(path string) (Meta, error) {
 		if r := reRole.FindStringSubmatch(attrs); r != nil {
 			role = strings.ToLower(r[1])
 		}
+		if role != "" && role != "aut" {
+			continue
+		}
+		m.Authors = append(m.Authors, val)
 		if m.Author == "" || role == "aut" {
 			m.Author = val
 			if fa := reFileAs.FindStringSubmatch(attrs); fa != nil {
 				m.AuthorSort = meta.Collapse(html.UnescapeString(fa[1]))
-			}
-			if role == "aut" {
-				break
 			}
 		}
 	}
