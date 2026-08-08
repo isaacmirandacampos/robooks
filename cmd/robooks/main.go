@@ -35,6 +35,7 @@ COMANDOS
   ingest    processa arquivos novos: dedup, metadados e layout do alvo
   check     verifica se um arquivo já existe na biblioteca
   edit      completa metadados e reaplica o layout nos livros JÁ na biblioteca
+  authors   acha autores duplicados numa lista do catálogo (lê TSV do stdin)
   targets   lista os alvos suportados
 
 EXEMPLOS
@@ -44,6 +45,8 @@ EXEMPLOS
   robooks ingest -enrich -apply ~/Downloads      aplica, buscando gêneros/ISBN
   robooks edit -enrich                           inspeciona o que falta na biblioteca
   robooks edit -enrich -apply                    completa gêneros/ISBN de todo o acervo
+  ... | robooks authors                          relatório de autores duplicados
+  ... | robooks authors -safe -sql               SQL de merge, só os casos seguros
 
 As flags vêm SEMPRE antes dos caminhos. Sem -apply, tudo é apenas inspeção.
 `
@@ -65,6 +68,10 @@ func main() {
 		os.Exit(cmdCheck(args))
 	case "edit":
 		os.Exit(cmdEdit(args))
+	case "genres":
+		os.Exit(cmdGenres(args))
+	case "authors":
+		os.Exit(cmdAuthors(args))
 	case "targets":
 		os.Exit(cmdTargets())
 	case "-h", "--help", "help":
@@ -95,7 +102,7 @@ func checkStrayFlags(args []string) {
 
 func defaultLibrary() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "kavita", "data", "Livros")
+	return filepath.Join(home, "Documents", "Livros")
 }
 
 func cmdTargets() int {
@@ -141,7 +148,7 @@ func cmdIndex(args []string) int {
 func cmdIngest(args []string) int {
 	fs := flag.NewFlagSet("ingest", flag.ExitOnError)
 	lib := fs.String("lib", defaultLibrary(), "raiz da biblioteca de destino")
-	tgt := fs.String("target", "kavita", "alvo: "+strings.Join(target.Names(), ", "))
+	tgt := fs.String("target", "grimmory", "alvo: "+strings.Join(target.Names(), ", "))
 	idxPath := fs.String("index", "", "arquivo de índice")
 	apply := fs.Bool("apply", false, "aplicar as mudanças (sem isso, apenas relata)")
 	workers := fs.Int("workers", 0, "paralelismo (padrão NumCPU-2)")
@@ -221,7 +228,7 @@ func cmdCheck(args []string) int {
 func cmdEdit(args []string) int {
 	fs := flag.NewFlagSet("edit", flag.ExitOnError)
 	lib := fs.String("lib", defaultLibrary(), "raiz da biblioteca")
-	tgt := fs.String("target", "kavita", "alvo cujas convenções aplicar: "+strings.Join(target.Names(), ", "))
+	tgt := fs.String("target", "grimmory", "alvo cujas convenções aplicar: "+strings.Join(target.Names(), ", "))
 	apply := fs.Bool("apply", false, "aplicar as mudanças (sem isso, apenas relata)")
 	enrichFlag := fs.Bool("enrich", false, "consultar fontes externas para completar gêneros, ISBN, editora e sinopse")
 	relayout := fs.Bool("relayout", false, "mover os arquivos para o layout do alvo")
@@ -236,6 +243,8 @@ func cmdEdit(args []string) int {
 	minMembers := fs.Int("min-series-volumes", 3, "com -detect-series, volumes mínimos para aceitar uma série")
 	excludeSeries := fs.String("exclude-series", "", "nomes de série a vetar, separados por vírgula (a detecção é heurística)")
 	seriesLog := fs.String("serieslog", "robooks-series.tsv", "log reversível das séries gravadas")
+	importTags := fs.String("import-tags", "", "TSV \"caminho<TAB>gêneros\" para gravar nos epubs (ex: exportado do catálogo)")
+	mergeTags := fs.Bool("merge-tags", false, "com -import-tags, somar aos gêneros do arquivo em vez de substituir")
 	fs.Parse(args)
 	checkStrayFlags(fs.Args())
 
@@ -244,6 +253,19 @@ func cmdEdit(args []string) int {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 		return 2
 	}
+	// A importação de tags é um modo próprio: a origem dos gêneros é um arquivo, não a
+	// biblioteca nem uma consulta externa, então nada do pipeline do Run se aplica.
+	if *importTags != "" {
+		if err := edit.ImportTags(edit.ImportOptions{
+			File: *importTags, Library: *lib, Apply: *apply,
+			Workers: *workers, Merge: *mergeTags,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	if err := edit.Run(edit.Options{
 		Library: *lib, Paths: fs.Args(), Target: t, Apply: *apply,
 		Enrich: *enrichFlag, Relayout: *relayout, Workers: *workers,

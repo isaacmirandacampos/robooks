@@ -36,8 +36,9 @@ type Target interface {
 // Registry lista os alvos disponíveis por nome.
 func Registry() map[string]Target {
 	return map[string]Target{
-		"kavita":  Kavita{},
-		"calibre": Calibre{},
+		"kavita":   Kavita{},
+		"grimmory": Grimmory{},
+		"calibre":  Calibre{},
 	}
 }
 

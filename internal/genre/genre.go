@@ -34,10 +34,14 @@ var (
 		`(?i)exilado|epubr|le ?livros|lelivros|libgen|z-?lib|semeadores|kingofmaine|iosbooks|` +
 		`(?i)cr[ée]dito ao site|digitalizado por|revisado por|tradu[çc][ãa]o de`)
 	// Idioma no lugar de gênero.
-	// O \b final seria errado aqui: "Foreign Languages" tem "lang" seguido de letra, e
-	// a fronteira de palavra não casaria — o rótulo escaparia da limpeza.
+	//
+	// O nome do idioma só é ruído quando está sozinho. Uma versão anterior deste padrão
+	// não tinha a âncora final, para alcançar "Foreign Languages", e com isso engolia
+	// "Portuguese Literature" — 226 livros que perdiam o único rótulo que os reunia.
+	// As formas compostas são listadas à parte, para o prefixo não decidir sozinho.
 	reLang = regexp.MustCompile(`(?i)^(portuguese|english|spanish|french|german|italian|` +
-		`foreign lang\w*|idioma|l[íi]ngua)\b?`)
+		`russian|japanese|chinese|latin|greek|idioma|l[íi]ngua)$|` +
+		`(?i)^foreign lang\w*|(?i)\blanguage (materials?|study|arts)$`)
 	// Uma palavra de verdade tem ao menos três letras seguidas.
 	rePalavra = regexp.MustCompile(`\p{L}{3}`)
 	// Numeral romano, para o Title Case não transformar "II" em "Ii".
